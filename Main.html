@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEON RAIDER | OMEGA PROTOCOL V2</title>
+    <style>
+        :root { 
+            --blue: #00f2ff; --pink: #ff007b; --purp: #bc13fe; 
+            --gold: #ffcc00; --dark: #050507; --glass: rgba(5, 5, 7, 0.9);
+        }
+        body, html { margin: 0; padding: 0; overflow: hidden; background: var(--dark); font-family: 'Segoe UI', sans-serif; color: white; user-select: none; }
+        
+        #gate, #welcome, #pause, #death, #shop {
+            position: absolute; inset: 0; background: var(--glass);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 1000; text-align: center; backdrop-filter: blur(15px);
+        }
+
+        .input-box {
+            background: transparent; border: 2px solid var(--blue);
+            color: var(--blue); padding: 15px; font-size: 1.2rem; text-align: center; outline: none; margin-bottom: 20px;
+        }
+
+        .panel { border: 1px solid var(--blue); padding: 40px; background: rgba(255,255,255,0.03); max-width: 600px; }
+
+        #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; padding: 25px; box-sizing: border-box; display: none; }
+        .hud-row { display: flex; justify-content: space-between; align-items: flex-start; }
+        
+        .box { background: rgba(0,0,0,0.9); border-left: 5px solid var(--blue); padding: 15px 25px; }
+        
+        .hp-cont { width: 250px; height: 12px; background: #111; border: 1px solid var(--blue); margin-top: 10px; position: relative; }
+        #hp-bar { width: 100%; height: 100%; background: var(--blue); transition: width 0.3s; }
+        #shield-bar { position: absolute; top: 0; left: 0; height: 100%; width: 0%; background: var(--gold); }
+
+        #minimap { position: absolute; bottom: 25px; right: 25px; width: 180px; height: 180px; background: rgba(0,0,0,0.9); border: 2px solid var(--blue); }
+
+        .shop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .shop-item { border: 1px solid var(--purp); padding: 15px; background: rgba(188, 19, 254, 0.1); cursor: pointer; }
+        .shop-item:hover { background: var(--purp); color: black; }
+        .price { color: var(--gold); font-weight: bold; display: block; }
+
+        button { background: transparent; color: var(--blue); border: 2px solid var(--blue); padding: 12px 30px; cursor: pointer; font-weight: bold; margin: 10px; text-transform: uppercase; }
+        button:hover { background: var(--blue); color: black; box-shadow: 0 0 20px var(--blue); }
+        
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="gate">
+        <h1 style="color: var(--blue)">TERMINAL ACCESS</h1>
+        <input type="password" id="pass" class="input-box" placeholder="PASSWORD">
+        <button onclick="unlock()">DECRYPT</button>
+    </div>
+
+    <div id="welcome" style="display:none;">
+        <div class="panel">
+            <h1 style="color: var(--blue)">OMEGA PROTOCOL V2</h1>
+            <p>• <b>WASD</b> - Move | <b>CLICK</b> - Fire<br>
+               • <b>X</b> - Switch Weapons | <b>Z</b> - Shop<br>
+               • <b>P</b> - Pause</p>
+            <p style="color: var(--gold)">ENEMIES SPAWN BEYOND THE RED BORDER.</p>
+            <button onclick="start()">INITIATE</button>
+        </div>
+    </div>
+
+    <div id="shop" style="display:none; z-index: 1005;">
+        <div class="panel">
+            <h1 style="color: var(--gold)">SHOP</h1>
+            <div id="credits-display">CREDITS: 0</div>
+            <div class="shop-grid">
+                <div class="shop-item" onclick="buy('hp')">INTEGRITY (+20)<br><span class="price">500</span></div>
+                <div class="shop-item" onclick="buy('speed')">THRUSTERS (+10%)<br><span class="price">800</span></div>
+                <div class="shop-item" onclick="buy('rate')">COOLING (-15%)<br><span class="price">1200</span></div>
+                <div class="shop-item" onclick="buy('dmg')">POWER (+10)<br><span class="price">1500</span></div>
+            </div>
+            <button onclick="toggleShop()">BACK</button>
+        </div>
+    </div>
+
+    <div id="pause" style="display:none; z-index: 1001;"><h1>SYSTEM PAUSED</h1><button onclick="togglePause()">RESUME</button></div>
+    <div id="death" style="display:none; z-index: 1002;"><h1>CRITICAL FAILURE</h1><button onclick="location.reload()">REBOOT</button></div>
+
+    <div id="hud">
+        <div class="hud-row">
+            <div class="box">
+                <div id="score-val">0</div>
+                <div id="wave-val" style="color: var(--pink)">WAVE 1</div>
+                <div class="hp-cont"><div id="hp-bar"></div><div id="shield-bar"></div></div>
+            </div>
+            <div class="box" style="border-color: var(--purp)">
+                <div id="wep-name" style="color: var(--purp); font-weight: bold;">REPEATER</div>
+            </div>
+        </div>
+        <canvas id="minimap"></canvas>
+    </div>
+
+    <canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+const mCanvas = document.getElementById('minimap'), mCtx = mCanvas.getContext('2d');
+const WORLD = 3000;
+let player, enemies = [], bullets = [], eBullets = [], obstacles = [], particles = [], powerups = [];
+let wave = 1, score = 0, credits = 0, active = false, paused = false, inShop = false;
+let keys = {}, lastFire = 0, colorT = 0, upg = {hp:0, speed:0, rate:0, dmg:0};
+
+const weapons = [
+    { name: "REPEATER", rate: 120, dmg: 15, speed: 18, spread: 0.05, count: 1 },
+    { name: "SLUG", rate: 700, dmg: 150, speed: 30, spread: 0, count: 1 },
+    { name: "FLAK", rate: 450, dmg: 20, speed: 14, spread: 0.4, count: 6 }
+];
+let curWep = 0;
+
+const unlock = () => {
+    if(document.getElementById('pass').value === "NEON_RAIDER_2026") {
+        document.getElementById('gate').style.display = 'none';
+        document.getElementById('welcome').style.display = 'flex';
+    } else alert("DENIED");
+};
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.color = color;
+        this.vx = (Math.random()-0.5)*6; this.vy = (Math.random()-0.5)*6;
+        this.life = 1.0;
+    }
+    update() { this.x += this.vx; this.y += this.vy; this.life -= 0.02; }
+}
+
+class Player {
+    constructor() {
+        this.x = WORLD/2; this.y = WORLD/2; this.r = 18;
+        this.maxHp = 100; this.hp = 100; this.speed = 6;
+        this.angle = 0; this.shield = 0;
+    }
+    update() {
+        let s = this.speed + (upg.speed * 0.6);
+        let dx = 0, dy = 0;
+        if(keys['w']) dy -= s; if(keys['s']) dy += s;
+        if(keys['a']) dx -= s; if(keys['d']) dx += s;
+        if(!this.col(this.x + dx, this.y)) this.x += dx;
+        if(!this.col(this.x, this.y + dy)) this.y += dy;
+        if(this.x<0 || this.x>WORLD || this.y<0 || this.y>WORLD) { if(this.shield<=0) this.hp -= 0.5; }
+        if(this.shield > 0) this.shield--;
+        if(this.hp <= 0) die();
+    }
+    col(nx, ny) {
+        for(let o of obstacles) if(nx+this.r > o.x && nx-this.r < o.x+o.w && ny+this.r > o.y && ny-this.r < o.y+o.h) return true;
+        return false;
+    }
+}
+
+class Enemy {
+    constructor(boss = false) {
+        this.boss = boss; this.r = boss ? 65 : 22;
+        this.hp = boss ? 1200 + wave*200 : 35 + wave*5;
+        this.speed = boss ? 2 : 2.5 + Math.random();
+        this.lastS = 0;
+        this.spawn();
+    }
+    spawn() {
+        let attempts = 0;
+        while(attempts < 50) {
+            this.x = Math.random() * WORLD; this.y = Math.random() * WORLD;
+            let ok = true;
+            for(let o of obstacles) if(this.x+50 > o.x && this.x-50 < o.x+o.w && this.y+50 > o.y && this.y-50 < o.y+o.h) ok = false;
+            if(Math.hypot(this.x-player.x, this.y-player.y) < 500) ok = false;
+            if(ok) return;
+            attempts++;
+        }
+        this.x = 100; this.y = 100; // Fallback
+    }
+    update() {
+        const d = Math.hypot(player.x - this.x, player.y - this.y);
+        const a = Math.atan2(player.y - this.y, player.x - this.x);
+        let vx = Math.cos(a) * this.speed, vy = Math.sin(a) * this.speed;
+        for(let o of obstacles) if(this.x+vx+this.r > o.x && this.x+vx-this.r < o.x+o.w && this.y+vy+this.r > o.y && this.y+vy-this.r < o.y+o.h) { vx=0; vy=0; }
+        this.x += vx; this.y += vy;
+        if(d < 600 && Date.now() - this.lastS > (this.boss ? 500 : 2000)) {
+            eBullets.push({x: this.x, y: this.y, vx: Math.cos(a)*8, vy: Math.sin(a)*8});
+            this.lastS = Date.now();
+        }
+    }
+}
+
+const start = () => {
+    document.getElementById('welcome').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+    player = new Player();
+    obstacles = Array.from({length: 15}, () => ({x: 300+Math.random()*2200, y: 300+Math.random()*2200, w: 150+Math.random()*200, h: 150+Math.random()*200, hUE: Math.random()*360}));
+    active = true; spawnWave(); loop();
+};
+
+const spawnWave = () => {
+    if(wave%5===0) enemies.push(new Enemy(true));
+    else for(let i=0; i<4+wave; i++) enemies.push(new Enemy());
+};
+
+const loop = () => {
+    if(!active) return;
+    if(!paused && !inShop) { update(); colorT++; }
+    draw();
+    requestAnimationFrame(loop);
+};
+
+const update = () => {
+    player.update();
+    for(let i=bullets.length-1; i>=0; i--) {
+        let b = bullets[i]; b.x += b.vx; b.y += b.vy;
+        let hit = b.x<0 || b.x>WORLD || b.y<0 || b.y>WORLD;
+        for(let o of obstacles) if(b.x>o.x && b.x<o.x+o.w && b.y>o.y && b.y<o.y+o.h) hit = true;
+        if(hit) { bullets.splice(i,1); continue; }
+        for(let j=enemies.length-1; j>=0; j--) {
+            let e = enemies[j];
+            if(Math.hypot(b.x-e.x, b.y-e.y) < e.r) {
+                e.hp -= b.dmg; for(let k=0; k<3; k++) particles.push(new Particle(b.x,b.y,'white'));
+                bullets.splice(i,1);
+                if(e.hp<=0) { score+=150; credits+=100; enemies.splice(j,1); if(!enemies.length) { wave++; spawnWave(); } }
+                break;
+            }
+        }
+    }
+    for(let i=eBullets.length-1; i>=0; i--) {
+        let b = eBullets[i]; b.x += b.vx; b.y += b.vy;
+        if(Math.hypot(b.x-player.x, b.y-player.y) < player.r) { if(player.shield<=0) player.hp -= 10; eBullets.splice(i,1); continue; }
+        for(let o of obstacles) if(b.x>o.x && b.x<o.x+o.w && b.y>o.y && b.y<o.y+o.h) { eBullets.splice(i,1); break; }
+    }
+    enemies.forEach(e => e.update());
+    particles.forEach((p,i) => { p.update(); if(p.life<=0) particles.splice(i,1); });
+    document.getElementById('hp-bar').style.width = (player.hp/player.maxHp*100) + "%";
+    document.getElementById('shield-bar').style.width = (player.shield/5) + "%";
+    document.getElementById('score-val').innerText = score;
+    document.getElementById('wave-val').innerText = "WAVE " + wave;
+    document.getElementById('wep-name').innerText = weapons[curWep].name;
+};
+
+const draw = () => {
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    ctx.fillStyle = '#050507'; ctx.fillRect(0,0,canvas.width, canvas.height);
+    const cx = player.x - canvas.width/2, cy = player.y - canvas.height/2;
+    ctx.strokeStyle = '#ff007b'; ctx.lineWidth = 10; ctx.strokeRect(-cx, -cy, WORLD, WORLD);
+    obstacles.forEach(o => {
+        let g = ctx.createRadialGradient(o.x-cx+o.w/2, o.y-cy+o.h/2, 0, o.x-cx+o.w/2, o.y-cy+o.h/2, o.w);
+        g.addColorStop(0, `hsla(${(o.hUE+colorT)%360},70%,50%,0.3)`); g.addColorStop(1, 'transparent');
+        ctx.fillStyle = g; ctx.fillRect(o.x-cx, o.y-cy, o.w, o.h);
+        ctx.strokeStyle = `hsla(${(o.hUE+colorT)%360},70%,50%,1)`; ctx.strokeRect(o.x-cx, o.y-cy, o.w, o.h);
+    });
+    ctx.save(); ctx.translate(player.x-cx, player.y-cy); ctx.rotate(player.angle);
+    ctx.strokeStyle = '#00f2ff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(18,0); ctx.lineTo(-12,-12); ctx.lineTo(-12,12); ctx.closePath(); ctx.stroke(); ctx.restore();
+    enemies.forEach(e => { ctx.strokeStyle = e.boss ? '#bc13fe' : '#ff007b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x-cx, e.y-cy, e.r, 0, 7); ctx.stroke(); });
+    bullets.forEach(b => { ctx.fillStyle = 'white'; ctx.fillRect(b.x-cx-2, b.y-cy-2, 4, 4); });
+    eBullets.forEach(b => { ctx.fillStyle = '#bc13fe'; ctx.fillRect(b.x-cx-3, b.y-cy-3, 6, 6); });
+    particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x-cx, p.y-cy, 2, 2); });
+    ctx.globalAlpha = 1;
+    mCtx.fillStyle = 'black'; mCtx.fillRect(0,0,180,180);
+    const s = 180/WORLD; mCtx.fillStyle = '#00f2ff'; mCtx.fillRect(player.x*s, player.y*s, 4, 4);
+    mCtx.fillStyle = '#ff007b'; enemies.forEach(e => mCtx.fillRect(e.x*s, e.y*s, 2, 2));
+};
+
+const toggleShop = () => { inShop = !inShop; document.getElementById('shop').style.display = inShop ? 'flex' : 'none'; document.getElementById('credits-display').innerText = "CREDITS: " + credits; };
+const togglePause = () => { paused = !paused; document.getElementById('pause').style.display = paused ? 'flex' : 'none'; };
+const buy = (t) => {
+    let p = {hp:500, speed:800, rate:1200, dmg:1500}[t];
+    if(credits >= p) {
+        credits -= p; upg[t]++; if(t==='hp'){player.maxHp+=20; player.hp=player.maxHp;}
+        document.getElementById('credits-display').innerText = "CREDITS: " + credits;
+    }
+};
+const die = () => { active = false; document.getElementById('death').style.display = 'flex'; };
+
+window.addEventListener('keydown', e => {
+    let k = e.key.toLowerCase(); keys[k] = true;
+    if(k === 'p') togglePause(); if(k === 'z') toggleShop();
+    if(k === 'x' && !inShop && !paused) curWep = (curWep + 1) % weapons.length;
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+window.addEventListener('mousemove', e => player.angle = Math.atan2(e.clientY - window.innerHeight/2, e.clientX - window.innerWidth/2));
+window.addEventListener('mousedown', () => {
+    if(!active || paused || inShop) return;
+    let w = weapons[curWep];
+    if(Date.now() - lastFire > w.rate - (upg.rate*15)) {
+        for(let i=0; i<w.count; i++) {
+            let a = player.angle + (Math.random()-0.5)*w.spread;
+            bullets.push({x: player.x, y: player.y, vx: Math.cos(a)*w.speed, vy: Math.sin(a)*w.speed, dmg: w.dmg + (upg.dmg*10), color: 'white'});
+        }
+        lastFire = Date.now();
+    }
+});
+</script>
+</body>
+</html>
